@@ -57,9 +57,6 @@ var url,
   uploadedItems,
   deletedItems;
 
-var endpointAPI = ""; //Change
-var dirname = "temp"; //Change
-
 // Call the script
 app.get("/script", async (req, res, next) => {
   res.send("Script started running.");
@@ -71,34 +68,9 @@ app.get("/script", async (req, res, next) => {
 app.all("", async (req, res) => {
   cleanup();
 });
-const getItem = async () => {
-  url = "http://mediafeed.boostmotorgroup.com/2438/export.xml";
-  let result = await axios.get(url);
-  let data = result.data;
-  const parser = new XMLParser({ ignoreAttributes: false });
-  var json = parser.parse(data);
-  xmlData = json["Datafeed"]["Dealership"];
-  vehicles = xmlData["Inventory"]["Vehicle"];
-  numOfItems = vehicles.length;
-  remaining = 0;
-  vehicle = getNextItem();
-  url = `https://api.webflow.com/collections/${collectionId}/items`;
-  data = JSON.stringify({ fields: vehicle });
-  try {
-    result = await axios.post(url, data, config);
-    console.log(result);
-  } catch (e) {
-    console.log(e);
-  }
-  return { fields: vehicle };
-};
 const runScript = () => {
   // Resetting variables
   uploadedItems = deletedItems = 0;
-  // creating temp dir
-  fs.rmSync(dirname, { recursive: true, force: true });
-  fs.mkdirSync(dirname);
-
   // Fetching old items to delete
   fetchAllItems();
 };
@@ -177,8 +149,6 @@ const addNextItem = async () => {
 
     url = `https://api.webflow.com/collections/${collectionId}/items`;
     var data = JSON.stringify({ fields: item });
-    //console.log("ITEM TO BE ADDED IS:\n", { fields: item });
-    //console.log("AFTER STRINGIFY:\n", data);
     try {
       // Adding the item to webflow
       console.log(
@@ -284,14 +254,17 @@ const getNextItem = async () => {
     "dealership-boost-id",
   ];
   vehicle_temp = {};
+  // set keys to lowercase and replace underscore with a dash (to match webflow naming)
   for (const key in vehicle)
     vehicle_temp[key.toLowerCase().replace("_", "-")] = vehicle[key];
   vehicle = vehicle_temp;
+  // add necessary webflow cms api keys
   vehicle["name"] = vehicle["vin"];
   vehicle["_archived"] = false;
   vehicle["_draft"] = false;
   vehicle_temp = {};
 
+  // filter out the not-needed keys
   Object.entries(vehicle).forEach(([key, value]) => {
     if (key_list.includes(key)) vehicle_temp[key] = value;
   });
@@ -315,6 +288,7 @@ const getNextItem = async () => {
     console.log("Couldn't upload image ", e);
   }
 };
+// Download the image, upload it to cloudinary, save the URL, then delete it from the server.
 const reuploadImage = async (boost_url) => {
   boost_url;
   filepath = boost_url.split("/").slice(-1)[0].replace(/%20/g, "_");
@@ -347,6 +321,7 @@ async function downloadImage(url, filepath) {
       .once("close", () => resolve(filepath));
   });
 }
+// delete cloudinary images and publish the website
 const cleanup = async () => {
   url = `https://api.webflow.com/sites/${siteId}/publish`;
   axios
