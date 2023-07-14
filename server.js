@@ -1,9 +1,7 @@
 //Environment variables
 const cron = require("node-cron");
 const express = require("express");
-const bodyParser = require("body-parser");
 const axios = require("axios");
-const cors = require("cors");
 const app = express();
 const port = process.env.PORT ?? 8001;
 const { XMLParser } = require("fast-xml-parser");
@@ -13,11 +11,6 @@ const cloudinary = require("cloudinary");
 app.listen(port, () => {
   console.log(`Listening on port ${port}`);
 });
-
-// middleware & static files
-// app.use(cors());
-// app.use(bodyParser.json());
-// app.use(express.json());
 
 cloudinary.config({
   cloud_name: "du7e4ltoq",
@@ -39,12 +32,6 @@ const domains = {
 };
 
 const REQUEST_DELAY = 1000;
-let numOfItems = 0,
-  remaining = 0,
-  dealership_info = {},
-  vehicles = [],
-  uploadedItems = 0,
-  deletedItems = 0;
 
 // Call the script
 app.get("/script", async (req, res, next) => {
@@ -58,65 +45,38 @@ app.all("", async (req, res) => {
   cleanup();
 });
 const runScript = () => {
-  resetVariables();
   // Fetching old items to delete
   fetchAllItems();
 };
-// Fetch all current items in the CMS
+// Fetch all current items in the CMS and API
 const fetchAllItems = async () => {
   url = `https://api.webflow.com/collections/${collectionId}/items`;
   try {
     const items = await axios.get(url, config);
     console.log("ITEMS FETCHED SUCCESSFULLY");
-    const data = items.data.items;
-    numOfItems = data.length;
-    console.log("Number of current items is: ", numOfItems);
-    console.log("First, delete all items");
-    deleteItems(data);
+
+    // Get the two sets of vehicles
+    let vehicles_webflow = items.data.items;
+    console.log("Number of fetched items: ", vehicles_webflow.length);
+    let vehicle_names = [];
+    vehicles_webflow.forEach((vehicle) => vehicle_names.push(vehicle["name"]));
+    let vehicles_boost = await getVehiclesInfo(vehicle_names, true);
+    const toRemove = vehicles_webflow.filter(
+      (a) => !vehicles_boost.some((b) => a.name == b.name)
+    );
+    const toAdd = vehicles_boost.filter(
+      (a) => !vehicles_webflow.some((b) => a.name == b.name)
+    );
+    if (toAdd.length == 0 && toRemove.length == 0) {
+      console.log("No updates needed. Script aborting");
+    } else {
+      await updateCMS(toRemove, toAdd);
+    }
   } catch (e) {
     console.log("Couldn't fetch all items ", e);
   }
 };
-// Recursively deleting all items
-const deleteItems = async (items) => {
-  if (numOfItems > 0) {
-    const item = items[deletedItems];
-    if (!item) return;
-    const itemId = item._id;
-    console.log(
-      "number of deleted items is ",
-      deletedItems,
-      " out of ",
-      numOfItems
-    );
-    const url = `https://api.webflow.com/collections/${collectionId}/items/${itemId}`;
-    try {
-      await axios.delete(url, config);
-      deletedItems++;
-      console.log("Item deleted successfully", item.name);
-    } catch (e) {
-      console.log("Couldn't delete the item ", item.name);
-    }
-  }
-  if (deletedItems == numOfItems) {
-    // If all items have been deleted
-    console.log(
-      "All items deleted successfully. Number of items deleted is ",
-      deletedItems
-    );
-    // Publishing the website before adding new items
-    const url = `https://api.webflow.com/sites/${siteId}/publish`;
-    axios
-      .post(url, domains, config)
-      .then(async () => {
-        console.log("Website Published Successfully!");
-        await updateCMS();
-      })
-      .catch((e) => console.log("Couldn't publish website, ", e));
-  } else setTimeout(deleteItems, REQUEST_DELAY, items);
-};
-// Update Webflow CMS via the script
-const updateCMS = async () => {
+const getVehiclesInfo = async (current_vehicle_names, reuploadImages) => {
   const url = "http://mediafeed.boostmotorgroup.com/2438/export.xml";
   const result = await axios.get(url);
   const data = result.data;
@@ -124,7 +84,7 @@ const updateCMS = async () => {
   const json = parser.parse(data);
   const dealership = json["Datafeed"]["Dealership"];
   // Dealership data
-  dealership_info = {
+  const dealership_info = {
     Dealership_Boost_ID: dealership["Dealership_Boost_ID"],
     Dealership_Other_ID: dealership["Dealership_Other_ID"],
     Dealership_Name: dealership["Dealership_Name"],
@@ -138,32 +98,70 @@ const updateCMS = async () => {
     Dealership_Latitude: dealership["Dealership_Latitude"],
     Dealership_Longitude: dealership["Dealership_Longitude"],
   };
-  vehicles = dealership["Inventory"]["Vehicle"];
-  numOfItems = vehicles.length;
-  console.log("Total number of items: ", numOfItems);
-
+  let vehicles = dealership["Inventory"]["Vehicle"];
+  let parsed_vehicles = [];
   // Delete to avoid memory leak
   delete json, dealership, parser;
-  // XML data retrieved
-  addNextItem();
+
+  for (let i = 0; i < vehicles.length; i++) {
+    let vehicle_info = vehicles[i];
+    let vehicle = { ...dealership_info, ...vehicle_info };
+    vehicle = await parseVehicle(
+      current_vehicle_names,
+      vehicle,
+      reuploadImages
+    );
+    parsed_vehicles.push(vehicle);
+  }
+  // Delete to avoid memory leak
+  delete vehicles, dealership_info;
+  return parsed_vehicles;
+};
+// Update Webflow CMS via the script
+const updateCMS = async (toRemove, toAdd) => {
+  // Delete items
+  await deleteItems(toRemove);
+  // Add items
+  await addItems(toAdd);
+};
+// deleting old items
+const deleteItems = async (oldItems) => {
+  numOldItems = oldItems.length;
+  console.log("Number of old items to delete: ", numOldItems);
+  console.log("Deleting items:");
+  for (let i = 0; i < numOldItems; i += 1) {
+    const item = items[i];
+    if (!item) return;
+    const itemId = item._id;
+    const url = `https://api.webflow.com/collections/${collectionId}/items/${itemId}`;
+    try {
+      await axios.delete(url, config);
+      console.log(`${i + 1}/${numOldItems}. item name: ${item.name}`);
+    } catch (e) {
+      console.log("Couldn't delete the item ", item.name);
+      console.log(e);
+    }
+    // add delay time
+    await new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY));
+  }
+  // If all items have been deleted
+  console.log("Items deleted successfully.");
 };
 // Adding an item to webflow
-const addNextItem = async () => {
-  try {
-    const item = await getNextItem();
-
-    const url = `https://api.webflow.com/collections/${collectionId}/items`;
+const addItems = async (newItems) => {
+  numNewItems = newItems.length;
+  console.log("Number of new items to upload: ", numNewItems);
+  console.log("Uploading items:");
+  const url = `https://api.webflow.com/collections/${collectionId}/items`;
+  for (let i = 0; i < numNewItems; i += 1) {
+    const item = newItems[i];
     const data = JSON.stringify({ fields: item });
     try {
       // Adding the item to webflow
-      console.log(
-        "Uploading item " + ++uploadedItems + " of " + numOfItems + " items."
-      );
-      const result = await axios.post(url, data, config);
-      console.log("Item uploaded successfully");
-      if (uploadedItems < numOfItems) setTimeout(addNextItem, REQUEST_DELAY);
-      else cleanup();
+      await axios.post(url, data, config);
+      console.log(`${i + 1}/${numNewItems}. item name: ${item.name}`);
     } catch (e) {
+      console.log("Couldn't upload item");
       console.log(
         "#######################################ERROR BEGIN######################"
       );
@@ -171,17 +169,15 @@ const addNextItem = async () => {
       console.log(
         "#######################################ERROR END######################"
       );
-      setTimeout(addNextItem, REQUEST_DELAY);
     }
-  } catch (e) {
-    console.log("Couldn't get next item: ", e);
+    // add delay time
+    await new Promise((resolve) => setTimeout(resolve, REQUEST_DELAY));
   }
+  console.log("Items uploaded successfully");
+  cleanup();
 };
-// Returns the next item after changing it to JSON
-const getNextItem = async () => {
-  const vehicle_info = vehicles[remaining++];
-
-  let vehicle = { ...dealership_info, ...vehicle_info };
+// Parses vehicle to JSON that's compliant with Webflow CMS API
+const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   // use the first image as the main one
   let imageGallery = [];
   let main_img_url =
@@ -256,22 +252,25 @@ const getNextItem = async () => {
   });
   vehicle = vehicle_temp;
   try {
-    // reupload main image
-    console.log("Reuploading main image");
-    vehicle["main-image"]["url"] = await reuploadImage(
-      vehicle["main-image"]["url"]
-    );
-    console.log("main image reuploaded");
-    // reupload gallery images
-    console.log("Reuploading IMAGE GALLERY");
-    for (let i = 0; i < vehicle["images"].length; i += 1)
-      vehicle["images"][i]["url"] = await reuploadImage(
-        vehicle["images"][i]["url"]
+    // If the vehicle exists, ignore it
+    if (reuploadImages && !current_vehicle_names.includes(vehicle["name"])) {
+      // reupload main image
+      console.log("Reuploading main image");
+      vehicle["main-image"]["url"] = await reuploadImage(
+        vehicle["main-image"]["url"]
       );
-    console.log("IMAGE GALLERY UPLOADED");
+      console.log("main image reuploaded");
+      // reupload gallery images
+      console.log("Reuploading IMAGE GALLERY");
+      for (let i = 0; i < vehicle["images"].length; i += 1)
+        vehicle["images"][i]["url"] = await reuploadImage(
+          vehicle["images"][i]["url"]
+        );
+      console.log("IMAGE GALLERY UPLOADED");
+    }
     return vehicle;
   } catch (e) {
-    console.log("Couldn't upload image ", e);
+    console.log("Couldn't upload images ", e);
   }
 };
 // Download the image, upload it to cloudinary, save the URL, then delete it from the server.
@@ -308,7 +307,6 @@ async function downloadImage(url, filepath) {
 }
 // delete cloudinary images and publish the website
 const cleanup = async () => {
-  resetVariables();
   const url = `https://api.webflow.com/sites/${siteId}/publish`;
   axios
     .post(url, domains, config)
@@ -316,14 +314,8 @@ const cleanup = async () => {
       console.log("Website Published Successfully!");
     })
     .catch((e) => console.log("Couldn't publish website, ", e));
-  const result = await cloudinary.v2.api.delete_all_resources();
+  await cloudinary.v2.api.delete_all_resources();
   console.log("All cloud images deleted. Clean up completed");
-};
-// Resetting variables
-const resetVariables = () => {
-  numOfItems = remaining = uploadedItems = deletedItems = 0;
-  dealership_info = {};
-  vehicles = [];
 };
 // Will execute every day at midnight GMT-5
 cron.schedule(
