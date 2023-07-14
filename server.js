@@ -340,15 +340,9 @@ const cleanup = async () => {
   console.log("All cloud images deleted. Clean up completed");
 };
 // Will execute every day at midnight GMT-5
-cron.schedule(
-  "0 0 0 * * *",
-  {
-    timezone: "Etc/GMT+2",
-  },
-  () => {
-    console.log(
-      "######################################## THE SCRIPT IS RUNNING THROUGH THE CRON JOB ########################################"
-    );
-    runScript();
-  }
-);
+Cron("0 0 2 * * *", () => {
+  console.log(
+    "######################################## THE SCRIPT IS RUNNING THROUGH THE CRON JOB ########################################"
+  );
+  runScript();
+});
