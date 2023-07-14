@@ -7,6 +7,7 @@ const port = process.env.PORT ?? 8001;
 const { XMLParser } = require("fast-xml-parser");
 const fs = require("fs");
 const cloudinary = require("cloudinary");
+const he = require("he");
 
 app.listen(port, () => {
   console.log(`Listening on port ${port}`);
@@ -60,6 +61,7 @@ const fetchAllItems = async () => {
     console.log("Number of fetched items: ", vehicles_webflow.length);
     let vehicle_names = [];
     vehicles_webflow.forEach((vehicle) => vehicle_names.push(vehicle["name"]));
+    console.log("Parsing XML vehicles");
     let vehicles_boost = await getVehiclesInfo(vehicle_names, true);
     const toRemove = vehicles_webflow.filter(
       (a) => !vehicles_boost.some((b) => a.name == b.name)
@@ -106,6 +108,7 @@ const getVehiclesInfo = async (current_vehicle_names, reuploadImages) => {
   for (let i = 0; i < vehicles.length; i++) {
     let vehicle_info = vehicles[i];
     let vehicle = { ...dealership_info, ...vehicle_info };
+    console.log(`Parsing vehicle number${i + 1}/${vehicles.length}`);
     vehicle = await parseVehicle(
       current_vehicle_names,
       vehicle,
@@ -207,48 +210,67 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   vehicle["Exterior_Features"] = JSON.stringify(vehicle["Exterior_Features"]);
   vehicle["Safety_Features"] = JSON.stringify(vehicle["Safety_Features"]);
   key_list = [
-    "_draft",
-    "_archived",
-    "price2",
-    "price",
-    "seats",
-    "doors",
-    "mileage",
-    "year",
-    "vehiclestatus",
-    "special",
-    "certified",
-    "features",
-    "safety-features",
-    "exterior-features",
-    "interior-features",
-    "interior-colour",
-    "exterior-colour",
-    "body-style",
-    "submodel-trim",
-    "dealership-name",
-    "main-image",
-    "images",
-    "transmission",
-    "model",
-    "make",
     "name",
     "dealership-boost-id",
+    "stock-number",
+    "images",
+    "year",
+    "make",
+    "model",
+    "submodel-trim",
+    "body-style",
+    "exterior-colour",
+    "interior-colour",
+    "mileage",
+    "doors",
+    "seats",
+    "transmission",
+    "cylinders",
+    "price",
+    "price2",
+    "monthly-payment",
+    "interior-features",
+    "exterior-features",
+    "safety-features",
+    "features",
+    "main-image",
+    "drivetrain-features",
+    "warranty-text",
+    "certified",
+    "special",
+    "carproof",
+    "drivetrain",
+    "fueltype",
+    "vehiclestatus",
+    "modelcode",
+    "videos",
+    "description-2",
+    "_draft",
+    "_archived",
   ];
+
   let vehicle_temp = {};
   // set keys to lowercase and replace underscore with a dash (to match webflow naming)
   for (const key in vehicle)
     vehicle_temp[key.toLowerCase().replace("_", "-")] = vehicle[key];
   vehicle = vehicle_temp;
+  // formatting description and renaming the key
+  vehicle["description-2"] = he
+    .decode(vehicle["description"])
+    .replace(/&#39;/g, "'");
+  delete vehicle["description"];
   // add necessary webflow cms api keys
   vehicle["name"] = vehicle["vin"];
   vehicle["_archived"] = false;
   vehicle["_draft"] = false;
+  vehicle["dealership-boost-id"] = vehicle["dealershipid"];
   vehicle_temp = {};
 
   // filter out the not-needed keys
   Object.entries(vehicle).forEach(([key, value]) => {
-    if (key_list.includes(key)) vehicle_temp[key] = value;
+    if (key_list.includes(key)) {
+      vehicle_temp[key] = value;
+    }
   });
   vehicle = vehicle_temp;
   try {
@@ -267,7 +289,7 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
           vehicle["images"][i]["url"]
         );
       console.log("IMAGE GALLERY UPLOADED");
-    }
+    } else console.log("This item already exists in the Webflow CMS API");
     return vehicle;
   } catch (e) {
     console.log("Couldn't upload images ", e);
