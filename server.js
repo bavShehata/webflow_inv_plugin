@@ -203,9 +203,12 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   vehicle["Images"] = imageGallery;
   // store the other multivalues into strings
   vehicle["Features"] = JSON.stringify(vehicle["Features"]);
-  vehicle["Model"] = vehicle["Model"].toString();
-  vehicle["Certified"] = vehicle["Certified"].toString();
-  vehicle["Special"] = vehicle["Special"].toString();
+  vehicle["Model"] = makeString(vehicle["Model"]);
+  vehicle["Certified"] = makeString(vehicle["Certified"]);
+  vehicle["Special"] = makeString(vehicle["Special"]);
+  vehicle["Drivetrain_Features"] = makeString(vehicle["Drivetrain_Features"]);
+  vehicle["Dealership_Boost_ID"] = makeString(vehicle["Dealership_Boost_ID"]);
+
   vehicle["Interior_Features"] = JSON.stringify(vehicle["Interior_Features"]);
   vehicle["Exterior_Features"] = JSON.stringify(vehicle["Exterior_Features"]);
   vehicle["Safety_Features"] = JSON.stringify(vehicle["Safety_Features"]);
@@ -263,7 +266,6 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   vehicle["name"] = vehicle["vin"];
   vehicle["_archived"] = false;
   vehicle["_draft"] = false;
-  vehicle["dealership-boost-id"] = vehicle["dealershipid"];
   vehicle_temp = {};
 
   // filter out the not-needed keys
@@ -294,6 +296,11 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   } catch (e) {
     console.log("Couldn't upload images ", e);
   }
+};
+
+// change value to string if it exists
+const makeString = (val) => {
+  if (val) return val.toString();
 };
 // Download the image, upload it to cloudinary, save the URL, then delete it from the server.
 const reuploadImage = async (boost_url) => {
