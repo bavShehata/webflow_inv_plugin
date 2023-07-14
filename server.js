@@ -1,5 +1,5 @@
 //Environment variables
-const cron = require("node-cron");
+const cron = require("croner");
 const express = require("express");
 const axios = require("axios");
 const app = express();
@@ -108,7 +108,7 @@ const getVehiclesInfo = async (current_vehicle_names, reuploadImages) => {
   for (let i = 0; i < vehicles.length; i++) {
     let vehicle_info = vehicles[i];
     let vehicle = { ...dealership_info, ...vehicle_info };
-    console.log(`Parsing vehicle number${i + 1}/${vehicles.length}`);
+    console.log(`Parsing vehicle number ${i + 1}/${vehicles.length}`);
     vehicle = await parseVehicle(
       current_vehicle_names,
       vehicle,
@@ -212,7 +212,7 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   key_list = [
     "name",
     "dealership-boost-id",
-    "stock-number",
+    "stock-number-2",
     "images",
     "year",
     "make",
@@ -254,11 +254,11 @@ const parseVehicle = async (current_vehicle_names, vehicle, reuploadImages) => {
   for (const key in vehicle)
     vehicle_temp[key.toLowerCase().replace("_", "-")] = vehicle[key];
   vehicle = vehicle_temp;
-  // formatting description and renaming the key
+  // formatting description and renaming keys
   vehicle["description-2"] = he
     .decode(vehicle["description"])
     .replace(/&#39;/g, "'");
-  delete vehicle["description"];
+  vehicle["stock-number-2"] = vehicle["stock-number"];
   // add necessary webflow cms api keys
   vehicle["name"] = vehicle["vin"];
   vehicle["_archived"] = false;
@@ -342,14 +342,13 @@ const cleanup = async () => {
 // Will execute every day at midnight GMT-5
 cron.schedule(
   "0 0 0 * * *",
+  {
+    timezone: "Etc/GMT+2",
+  },
   () => {
     console.log(
       "######################################## THE SCRIPT IS RUNNING THROUGH THE CRON JOB ########################################"
     );
     runScript();
-  },
-  {
-    scheduled: true,
-    timezone: "Etc/GMT+2",
   }
 );
